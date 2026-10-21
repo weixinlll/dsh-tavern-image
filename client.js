@@ -860,11 +860,14 @@ let openImageOverlay = null
         jsonFetch(BASE + '/job-detail?id=' + encodeURIComponent(String(jobId)), { cache: 'no-store' })
           .then(r => {
             if (!r?.ok || !r.job) { openPromptEditor({ note: '读不到提示词：' + (r?.error || '') }); return }
-            // 显示"展开前"的原始提示词：能一眼看出调用了哪些角色 / 服装
+            // 显示"展开前"的原始提示词：能一眼看出调用了哪些角色 / 服装；
+            // 分角色的图由宿主把「场景 + 各角色块」拼好放在 promptText 里，一起显示、一起编辑。
+            const sceneText = String(r.job.rawPrompt || r.job.tag || r.job.prompt || '')
+            const blocksText = String(r.job.promptText || '')
             openPromptEditor({
-              prompt: String(r.job.rawPrompt || r.job.tag || r.job.prompt || ''),
+              prompt: blocksText || sceneText,
               negative: String(r.job.negative || ''),
-              note: '',
+              note: blocksText ? '场景与角色块一起显示；改完重画会按角色分区重新发送' : '',
               rawPrompt: String(r.job.rawPrompt || ''),
               finalPrompt: String(r.job.prompt || ''),
             })
@@ -1182,12 +1185,17 @@ function versionsOf(jobId) {
       async function improve() {
         openPromptEditor({ busy: 'improve', note: '后台正在改…' })
         try {
+          // 整段（场景 + 角色块）交给后台：那边按结构改写，场景和每个角色的 Tag 都能动
           const r = await jsonFetch(BASE + '/improve-prompt', {
             method: 'POST', headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ jobId: view.jobId, prompt: view.prompt, instruction: view.instruction }),
           })
           if (!r?.ok || !r.prompt) { say('没改成：' + (r?.error || '模型没返回')); return }
-          openPromptEditor({ prompt: r.prompt, note: '已按你的要求改写，可以直接重画', busy: '' })
+          openPromptEditor({
+            prompt: String(r.prompt),
+            note: r.repaired ? '改好了；模型没保住角色块结构，已用原来的角色块补回' : '已按你的要求改写（角色块也一起改了），可以直接重画',
+            busy: '',
+          })
         } catch (error) {
           say('失败：' + (error?.message ?? error))
         } finally {
@@ -2717,20 +2725,10 @@ function versionsOf(jobId) {
           label(caption), h('input', { 'aria-label': caption, type, value: String((localFields.options || {})[key] ?? ''), placeholder: placeholder || '', style: full(), onChange: e => updateOption(key, type === 'number' ? Number(e.target.value) : e.target.value) }))
         // NovelAI 常用模型 / 采样器 / 噪点表（下拉候选；不在表里的旧值会作为「当前值」保留）
         const NAI_MODEL_OPTIONS = [
+          ['nai-diffusion-5-full', 'V5 Full'],
+          ['nai-diffusion-5-curated', 'V5 Curated'],
           ['nai-diffusion-4-5-full', 'V4.5 Full（默认）'],
           ['nai-diffusion-4-5-curated', 'V4.5 Curated'],
-          ['nai-diffusion-4-5-full-inpainting', 'V4.5 Full · 重绘'],
-          ['nai-diffusion-4-5-curated-inpainting', 'V4.5 Curated · 重绘'],
-          ['nai-diffusion-4-full', 'V4 Full'],
-          ['nai-diffusion-4-curated-preview', 'V4 Curated'],
-          ['nai-diffusion-4-full-inpainting', 'V4 Full · 重绘'],
-          ['nai-diffusion-4-curated-inpainting', 'V4 Curated · 重绘'],
-          ['nai-diffusion-3-full', 'V3 Full'],
-          ['nai-diffusion-3-curated', 'V3 Curated'],
-          ['nai-diffusion-3', 'V3 Anime'],
-          ['nai-diffusion-3-inpainting', 'V3 · 重绘'],
-          ['nai-diffusion-furry-3', 'V3 Furry'],
-          ['nai-diffusion-furry-3-inpainting', 'V3 Furry · 重绘'],
         ]
         const NAI_SAMPLER_OPTIONS = [
           ['k_euler_ancestral', 'Euler Ancestral（常用）'],
