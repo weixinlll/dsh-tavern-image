@@ -790,12 +790,12 @@ test('搜索按角色名和英文触发名过滤；无匹配空态不删除角�
 
   search.props.onChange({ target: { value: '乙主' } }); ui.render()
   let selector = ui.input('当前角色')
-  assert.deepEqual(selector.children.map(option => option.props.value), ['b'])
+  assert.deepEqual(ui.nodes(selector).filter(node => node.type === 'option').map(option => option.props.value), ['b'])
   assert.deepEqual(ui.rolePanels().map(panel => panel.props.key), ['b'])
 
   ui.input('搜索角色').props.onChange({ target: { value: 'yiren' } }); ui.render()
   selector = ui.input('当前角色')
-  assert.deepEqual(selector.children.map(option => option.props.value), ['b'])
+  assert.deepEqual(ui.nodes(selector).filter(node => node.type === 'option').map(option => option.props.value), ['b'])
   assert.deepEqual(ui.rolePanels().map(panel => panel.props.key), ['b'])
 
   ui.input('搜索角色').props.onChange({ target: { value: '不存在' } }); ui.render()
@@ -1190,4 +1190,187 @@ test('Release updater remains visible when Git support is false and shows live T
   assert.match(rendered, /Release 更新：下载官方发布包并校验 SHA-256/)
   assert.match(rendered, /先更新 Tavern/)
   assert.equal(ui.button('检查更新').props.disabled, true)
+})
+
+test('从其他角色复制服装：可多选、同名加（复制）、新编号且不抢常穿，保存后各自独立', async () => {
+  const a = Object.assign(person('a', '甲'), { outfits: [
+    { id: 'a1', name: '常服', upper: '白衬衫', lower: '长裙', enabled: true, default: true },
+    { id: 'a2', name: '睡衣', upper: '吊带', lower: '短裤', enabled: true, default: false },
+    { id: 'a3', name: '礼服', upper: '黑色礼服', lower: '', enabled: false, default: false },
+  ] })
+  const b = Object.assign(person('b', '乙'), { outfits: [{ id: 'b1', name: '常服', upper: '卫衣', lower: '牛仔裤', enabled: true, default: true }] })
+  const ui = harness({}, [a, b])
+  await ui.ready()
+  ui.role('b')
+  ui.button('从其他角色复制服装').props.onClick(); ui.render()
+  ui.input('复制服装的来源角色').props.onChange({ target: { value: 'a' } }); ui.render()
+  assert.equal(ui.button('先勾选要复制的服装').props.disabled, true)
+  const box = name => ui.nodes(ui.input('复制服装')).find(node => node.type === 'label' && ui.text(node).startsWith(name)).children.find(child => child.type === 'input')
+  box('常服').props.onChange({ target: { checked: true } }); ui.render()
+  box('礼服').props.onChange({ target: { checked: true } }); ui.render()
+  ui.button('复制这 2 套到「乙」').props.onClick(); ui.render()
+  assert.match(ui.text(ui.render()), /有未保存修改/)
+  await ui.button('保存人物库').props.onClick(); ui.render()
+  const [savedA, savedB] = ui.state.definitions.characters
+  assert.deepEqual(savedB.outfits.map(o => o.name), ['常服', '常服（复制）', '礼服'])
+  assert.deepEqual(savedB.outfits.map(o => o.default), [true, false, false])
+  assert.equal(savedB.outfits[1].upper, '白衬衫')
+  assert.equal(savedB.outfits[2].enabled, false)
+  const ids = savedB.outfits.map(o => o.id)
+  assert.equal(new Set(ids.concat(savedA.outfits.map(o => o.id))).size, 6)
+  assert.equal(savedA.outfits.length, 3)
+  // 面板复制完自动收起
+  assert.equal(ui.nodes(ui.render()).some(node => node.props?.['aria-label'] === '复制服装'), false)
+})
+
+test('复制服装：目标角色没有服装时，第一套复制品成为常穿', async () => {
+  const a = Object.assign(person('a', '甲'), { outfits: [{ id: 'a1', name: '常服', upper: '白衬衫', enabled: true, default: true }] })
+  const ui = harness({}, [a, person('b', '乙')])
+  await ui.ready()
+  ui.role('b')
+  ui.button('从其他角色复制服装').props.onClick(); ui.render()
+  ui.input('复制服装的来源角色').props.onChange({ target: { value: 'a' } }); ui.render()
+  ui.button('全选').props.onClick(); ui.render()
+  ui.button('复制这 1 套到「乙」').props.onClick(); ui.render()
+  await ui.button('保存人物库').props.onClick(); ui.render()
+  const savedB = ui.state.definitions.characters[1]
+  assert.equal(savedB.outfits.length, 1)
+  assert.equal(savedB.outfits[0].default, true)
+  assert.notEqual(savedB.outfits[0].id, 'a1')
+})
+
+test('按部位复制：从几套里挑部位拼成新服装，同一部位按顺序用逗号拼接', async () => {
+  const a = Object.assign(person('a', '甲'), { outfits: [
+    { id: 'a1', name: '常服', upper: '白衬衫', lower: '长裙', shoes: '帆布鞋', accessory: '', enabled: true, default: true },
+    { id: 'a2', name: '冬装', upper: '大衣', lower: '毛呢裙', shoes: '短靴', accessory: '围巾', enabled: true, default: false },
+  ] })
+  const b = Object.assign(person('b', '乙'), { outfits: [{ id: 'b1', name: '常服', upper: '卫衣', lower: '牛仔裤', enabled: true, default: true }] })
+  const ui = harness({}, [a, b])
+  await ui.ready()
+  ui.role('b')
+  ui.button('从其他角色复制服装').props.onClick(); ui.render()
+  ui.input('复制服装的来源角色').props.onChange({ target: { value: 'a' } }); ui.render()
+  ui.button('按部位复制').props.onClick(); ui.render()
+  assert.equal(ui.button('先勾选要复制的部位').props.disabled, true)
+  ui.input('常服-上衣').props.onChange({ target: { checked: true } }); ui.render()
+  ui.input('冬装-上衣').props.onChange({ target: { checked: true } }); ui.render()
+  ui.input('冬装-配饰').props.onChange({ target: { checked: true } }); ui.render()
+  ui.input('新服装名').props.onChange({ target: { value: '常服' } }); ui.render()
+  ui.button('复制 2 个部位为新服装').props.onClick(); ui.render()
+  await ui.button('保存人物库').props.onClick(); ui.render()
+  const savedB = ui.state.definitions.characters[1]
+  assert.equal(savedB.outfits.length, 2)
+  const made = savedB.outfits[1]
+  assert.equal(made.name, '常服（复制）')
+  assert.equal(made.upper, '白衬衫, 大衣')
+  assert.equal(made.accessory, '围巾')
+  assert.equal(made.lower, '')
+  assert.equal(made.default, false)
+  assert.equal(ui.state.definitions.characters[0].outfits[1].upper, '大衣')
+})
+
+test('按部位复制：放进已有的一套，可覆盖或追加；整套勾选会勾上有内容的全部部位', async () => {
+  const a = Object.assign(person('a', '甲'), { outfits: [{ id: 'a1', name: '泳装', upper: '白色比基尼', lower: '比基尼下装', shoes: '凉鞋', accessory: '草帽', enabled: true, default: true }] })
+  const b = Object.assign(person('b', '乙'), { outfits: [{ id: 'b1', name: '度假', upper: '吊带', lower: '短裙', shoes: '', accessory: '墨镜', enabled: true, default: true }] })
+  const ui = harness({}, [a, b])
+  await ui.ready()
+  ui.role('b')
+  ui.button('从其他角色复制服装').props.onClick(); ui.render()
+  ui.input('复制服装的来源角色').props.onChange({ target: { value: 'a' } }); ui.render()
+  ui.button('按部位复制').props.onClick(); ui.render()
+  ui.input('整套部位-泳装').props.onChange({ target: { checked: true } }); ui.render()
+  ui.input('泳装-上衣').props.onChange({ target: { checked: false } }); ui.render()
+  ui.input('部位复制的目标服装').props.onChange({ target: { value: 'b1' } }); ui.render()
+  ui.input('部位合并方式').props.onChange({ target: { value: 'append' } }); ui.render()
+  ui.button('复制 3 个部位到这套').props.onClick(); ui.render()
+  await ui.button('保存人物库').props.onClick(); ui.render()
+  const outfit = ui.state.definitions.characters[1].outfits[0]
+  assert.equal(ui.state.definitions.characters[1].outfits.length, 1)
+  assert.equal(outfit.upper, '吊带')
+  assert.equal(outfit.lower, '短裙, 比基尼下装')
+  assert.equal(outfit.shoes, '凉鞋')
+  assert.equal(outfit.accessory, '墨镜, 草帽')
+  assert.equal(outfit.id, 'b1')
+
+  ui.button('从其他角色复制服装').props.onClick(); ui.render()
+  ui.input('复制服装的来源角色').props.onChange({ target: { value: 'a' } }); ui.render()
+  ui.button('按部位复制').props.onClick(); ui.render()
+  ui.input('泳装-配饰').props.onChange({ target: { checked: true } }); ui.render()
+  ui.input('部位复制的目标服装').props.onChange({ target: { value: 'b1' } }); ui.render()
+  ui.button('复制 1 个部位到这套').props.onClick(); ui.render()
+  await ui.button('保存人物库').props.onClick(); ui.render()
+  assert.equal(ui.state.definitions.characters[1].outfits[0].accessory, '草帽')
+})
+
+const cardsReply = () => ({ ok: true, cards: [{ path: 'cards/a.json', name: 'a', title: '甲卡' }, { path: 'cards/b.json', name: 'b', title: '乙卡' }], current: 'cards/a.json' })
+
+test('人物库默认只看当前卡（含未绑定），按卡分段；可切换全部/只看未绑定；未绑定的人可一键绑定到当前卡', async () => {
+  const chars = [Object.assign(person('x', '小甲'), { cards: ['cards/a.json'] }), Object.assign(person('y', '小乙'), { cards: ['cards/b.json'] }), person('z', '路人')]
+  const ui = harness({ cards: cardsReply }, chars)
+  await ui.ready()
+  const values = () => ui.nodes(ui.input('当前角色')).filter(node => node.type === 'option').map(option => option.props.value)
+  const groups = () => ui.nodes(ui.input('当前角色')).filter(node => node.type === 'optgroup').map(group => group.props.label)
+  assert.equal(ui.input('按卡筛选人物').props.value, 'cards/a.json')
+  assert.deepEqual(values(), ['x', 'z'])
+  assert.deepEqual(groups(), ['「甲卡」的人物', '未绑定（所有卡通用）'])
+  ui.input('按卡筛选人物').props.onChange({ target: { value: 'all' } }); ui.render()
+  assert.deepEqual(values(), ['x', 'y', 'z'])
+  ui.input('按卡筛选人物').props.onChange({ target: { value: '__unbound' } }); ui.render()
+  assert.deepEqual(values(), ['z'])
+  assert.match(ui.text(ui.role('z')), /未绑定卡/)
+  ui.button('绑定到「甲卡」').props.onClick(); ui.render()
+  await ui.button('保存人物库').props.onClick(); ui.render()
+  assert.deepEqual(ui.state.definitions.characters.find(c => c.id === 'z').cards, ['cards/a.json'])
+})
+
+test('从选定的卡导入先预览：可取消勾选，确认后只把勾选的候选送回后台写入', async () => {
+  const calls = []
+  const ui = harness({
+    cards: cardsReply,
+    'import-characters': ({ body, state, setState }) => {
+      calls.push(body)
+      if (body.dryRun) return { ok: true, preview: true, cardName: '甲卡', skippedMinors: ['周屿'], candidates: [
+        { action: 'add', person: { name: '林晚', traits: { feature: '黑色长发' } } },
+        { action: 'add', person: { name: '沈月', traits: { feature: '银色短发' } } },
+        { action: 'same', person: { name: '甲', traits: {} } },
+      ] }
+      const next = { ...state, definitions: { ...state.definitions, characters: state.definitions.characters.concat(body.apply.map((p, k) => ({ ...person('n' + k, p.name), cards: [body.card] }))) } }
+      setState(next)
+      return { ok: true, added: body.apply.map(p => p.name), updated: [], state: next }
+    },
+  })
+  await ui.ready()
+  ui.button('从选定的卡导入').props.onClick(); await flush(); ui.render()
+  assert.equal(calls[0].dryRun, true)
+  assert.equal(calls[0].card, 'cards/a.json')
+  assert.match(ui.text(ui.input('导入预览')), /周屿/)
+  assert.equal(ui.input('导入 甲').props.checked, false)
+  ui.input('导入 沈月').props.onChange({ target: { checked: false } }); ui.render()
+  ui.button('确认导入 1 位').props.onClick(); await flush(); ui.render()
+  assert.deepEqual(calls[1].apply.map(p => p.name), ['林晚'])
+  assert.equal(calls[1].dryRun, undefined)
+  assert.equal(ui.nodes(ui.render()).some(node => node.props?.['aria-label'] === '导入预览'), false)
+  assert.ok(ui.state.definitions.characters.some(c => c.name === '林晚'))
+})
+
+test('整理列出玩家角色、未绑定、重名、外貌空白；概览卡片点击切到该人物', async () => {
+  const full = { feature: 'a', face: 'b', faceBack: 'c', bodySFW: 'd' }
+  const chars = [Object.assign(person('p', '你'), { cards: ['cards/a.json'] }), Object.assign(person('d1', '阿梅'), { cards: ['cards/a.json'], traits: full }), Object.assign(person('d2', '阿梅'), { cards: ['cards/a.json'], traits: full }), Object.assign(person('u', '路人'), { traits: full })]
+  const ui = harness({ cards: cardsReply }, chars)
+  await ui.ready()
+  ui.button('整理').props.onClick(); ui.render()
+  const text = ui.text(ui.input('整理人物库'))
+  assert.match(text, /像是玩家角色/)
+  assert.match(text, /重名/)
+  assert.match(text, /没绑定卡/)
+  assert.match(text, /外貌只填了/)
+  ui.nodes(ui.input('整理人物库')).find(node => node.type === 'button' && ui.text(node) === '删除').props.onClick(); ui.render()
+  ui.nodes(ui.input('整理人物库')).find(node => node.type === 'button' && ui.text(node) === '绑定到「甲卡」').props.onClick(); ui.render()
+  await ui.button('保存人物库').props.onClick(); ui.render()
+  assert.equal(ui.state.definitions.characters.some(c => c.name === '你'), false)
+  assert.deepEqual(ui.state.definitions.characters.find(c => c.id === 'u').cards, ['cards/a.json'])
+
+  ui.button('概览').props.onClick(); ui.render()
+  ui.input('概览 路人').props.onClick(); ui.render()
+  assert.equal(ui.input('当前角色').props.value, 'u')
 })
