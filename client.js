@@ -2321,6 +2321,8 @@ function versionsOf(jobId) {
       const [designDone, setDesignDone] = React.useState('')
       // 用稳定 id 保存改进草稿；删除前面的角色不会让草稿移到另一位身上。
       const [improveDraft, setImproveDraft] = React.useState({})
+      // 从别的角色复制服装：{ target: 目标角色 id, source: 来源角色 id, picked: 选中的服装 id }
+      const [outfitCopy, setOutfitCopy] = React.useState({ target: '', source: '', picked: [] })
       // 正在跑的改进任务（按角色 id 去重，不妨碍连续生成别的）
       const improveInFlight = React.useRef({})
       // 保存状态：'' 空闲 / 'saving' / 'saved' / 'failed:原因'
@@ -3714,7 +3716,164 @@ function versionsOf(jobId) {
             )),
             h('div', { style: S.row },
               h('button', { style: buttonStyle, onClick: () => patch(i, { outfits: outfits.concat([{ id: 'o' + Date.now(), name: '新服装', upper: '', lower: '', shoes: '', accessory: '', full: '', back: '', negative: '', enabled: true, default: outfits.length === 0 }]) }) }, '新增服装'),
+              h('button', { style: buttonStyle, onClick: () => setOutfitCopy(current => current.target === c.id ? { target: '', source: '', picked: [] } : { target: c.id, source: '', picked: [], mode: 'whole', parts: {} }) }, outfitCopy.target === c.id ? '收起复制' : '从其他角色复制服装'),
             ),
+            outfitCopy.target === c.id ? outfitCopyPanel(c, i) : null,
+          )
+        }
+        /**
+         * 从另一位角色复制服装到当前角色，两种方式：
+         * - 整套：勾一套、几套或全选，复制成新服装（新编号、不抢常穿，同名加「（复制）」）。
+         * - 按部位：从一套或几套里勾上衣/下装/鞋袜等部位，拼成一套新服装，或放进当前角色已有的某一套（覆盖或追加）。
+         * 复制品都是独立的一份；改完要点「保存人物库」。
+         */
+        function outfitCopyPanel(c, i) {
+          const PARTS = [['upper', '上衣'], ['lower', '下装'], ['shoes', '鞋袜'], ['accessory', '配饰'], ['full', '整体'], ['back', '背面'], ['negative', '负面']]
+          const cp = outfitCopy
+          const sources = characters.filter(person => person.id !== c.id && (person.outfits || []).length)
+          const source = sources.find(person => person.id === cp.source) || null
+          const list = source ? (source.outfits || []) : []
+          const mode = cp.mode === 'parts' ? 'parts' : 'whole'
+          const set = changes => setOutfitCopy(current => Object.assign({}, current, changes))
+          const close = () => setOutfitCopy({ target: '', source: '', picked: [] })
+          const own = c.outfits || []
+          const small = Object.assign({}, buttonStyle, { fontSize: '12px' })
+          const valueOf = (o, key) => String((key === 'upper' ? (o.upper || o.body) : o[key]) || '').trim()
+
+          // —— 整套 ——
+          const picked = new Set(cp.picked || [])
+          const chosen = list.filter(o => picked.has(o.id))
+          const copyWhole = () => {
+            if (!chosen.length) return
+            patch(i, person => {
+              const mine = person.outfits || []
+              const names = new Set(mine.map(o => String(o.name || '')))
+              const stamp = Date.now()
+              const added = chosen.map((o, k) => {
+                let name = String(o.name || '服装')
+                while (names.has(name)) name += '（复制）'
+                names.add(name)
+                return Object.assign({}, o, { id: 'o' + stamp + k + Math.random().toString(36).slice(2, 6), name, default: mine.length === 0 && k === 0 })
+              })
+              return { outfits: mine.concat(added) }
+            })
+            close()
+          }
+
+          // —— 按部位 ——
+          const parts = cp.parts || {}
+          const partOn = (oid, key) => (parts[oid] || []).includes(key)
+          const togglePart = (oid, key, on) => {
+            const next = new Set(parts[oid] || [])
+            if (on) next.add(key); else next.delete(key)
+            set({ parts: Object.assign({}, parts, { [oid]: PARTS.map(([k]) => k).filter(k => next.has(k)) }) })
+          }
+          const setOutfitParts = (o, on) => set({ parts: Object.assign({}, parts, { [o.id]: on ? PARTS.map(([k]) => k).filter(k => valueOf(o, k)) : [] }) })
+          // 收集选中的部位：同一部位从几套里都勾了，就按套的顺序用逗号拼起来
+          const gathered = {}
+          for (const o of list) for (const [key] of PARTS) if (partOn(o.id, key) && valueOf(o, key)) (gathered[key] = gathered[key] || []).push(valueOf(o, key))
+          const gatheredKeys = PARTS.map(([k]) => k).filter(k => gathered[k])
+          const dest = own.some(o => o.id === cp.dest) ? cp.dest : 'new'
+          const merge = cp.merge === 'append' ? 'append' : 'replace'
+          const copyParts = () => {
+            if (!gatheredKeys.length) return
+            const values = {}
+            for (const key of gatheredKeys) values[key] = gathered[key].join(', ')
+            patch(i, person => {
+              const mine = person.outfits || []
+              if (dest === 'new') {
+                const names = new Set(mine.map(o => String(o.name || '')))
+                let name = String(cp.newName || '').trim() || '拼搭服装'
+                while (names.has(name)) name += '（复制）'
+                const blank = { name, upper: '', lower: '', shoes: '', accessory: '', full: '', back: '', negative: '', enabled: true, default: mine.length === 0 }
+                return { outfits: mine.concat([Object.assign(blank, values, { id: 'o' + Date.now() + Math.random().toString(36).slice(2, 6) })]) }
+              }
+              return { outfits: mine.map(o => {
+                if (o.id !== dest) return o
+                const next = Object.assign({}, o)
+                for (const key of gatheredKeys) {
+                  const old = valueOf(o, key)
+                  next[key] = merge === 'append' && old ? old + ', ' + values[key] : values[key]
+                }
+                return next
+              }) }
+            })
+            close()
+          }
+
+          const tab = (value, label) => h('button', { style: Object.assign({}, small, mode === value ? { borderColor: '#6aa8ff', color: '#cfe1ff' } : {}), 'aria-pressed': mode === value, onClick: () => set({ mode: value }) }, label)
+          return h('div', { 'aria-label': '复制服装', style: { marginTop: '8px', padding: '10px 12px', borderRadius: '10px', background: 'rgba(255,255,255,.03)', border: '1px solid rgba(120,140,170,.2)' } },
+            h('div', { style: S.row },
+              h('span', { style: S.label }, '从谁那里复制'),
+              h('select', {
+                'aria-label': '复制服装的来源角色',
+                value: cp.source,
+                style: Object.assign({}, S.input, { maxWidth: '220px' }),
+                onChange: e => set({ source: e.target.value, picked: [], parts: {} }),
+              }, [h('option', { key: '', value: '', style: { color: 'CanvasText', backgroundColor: 'Canvas' } }, sources.length ? '选择角色' : '没有其他带服装的角色')].concat(
+                sources.map(person => h('option', { key: person.id, value: person.id, style: { color: 'CanvasText', backgroundColor: 'Canvas' } }, (person.name || '未命名角色') + '（' + (person.outfits || []).length + ' 套）')))),
+              tab('whole', '整套复制'),
+              tab('parts', '按部位复制'),
+            ),
+            source && mode === 'whole' ? h('div', null,
+              h('div', { style: S.row },
+                h('button', { style: small, onClick: () => set({ picked: list.map(o => o.id) }) }, '全选'),
+                h('button', { style: small, onClick: () => set({ picked: [] }) }, '全不选'),
+              ),
+              h('div', { style: { maxHeight: '240px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '6px' } },
+                list.map(o => h('label', { key: o.id, style: { display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', padding: '4px 6px', borderRadius: '6px', cursor: 'pointer', background: picked.has(o.id) ? 'rgba(106,168,255,.14)' : 'transparent' } },
+                  h('input', { type: 'checkbox', checked: picked.has(o.id), onChange: e => {
+                    const next = new Set(picked)
+                    if (e.target.checked) next.add(o.id); else next.delete(o.id)
+                    set({ picked: list.filter(x => next.has(x.id)).map(x => x.id) })
+                  } }),
+                  h('span', null, o.name || '未命名服装'),
+                  h('span', { style: { color: '#9aa3b2' } }, [valueOf(o, 'upper'), valueOf(o, 'lower')].filter(Boolean).join(' / ').slice(0, 60)),
+                )),
+              ),
+              h('div', { style: S.row },
+                h('button', { style: buttonStyle, disabled: !chosen.length, onClick: copyWhole }, chosen.length ? '复制这 ' + chosen.length + ' 套到「' + (c.name || '当前角色') + '」' : '先勾选要复制的服装'),
+              ),
+            ) : null,
+            source && mode === 'parts' ? h('div', null,
+              h('div', { style: { maxHeight: '320px', overflowY: 'auto', marginTop: '6px' } },
+                list.map(o => {
+                  const filled = PARTS.filter(([k]) => valueOf(o, k))
+                  const all = filled.length && filled.every(([k]) => partOn(o.id, k))
+                  return h('div', { key: o.id, 'aria-label': '部位-' + (o.name || o.id), style: { padding: '6px', borderTop: '1px solid #3a4150' } },
+                    h('label', { style: { display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', fontWeight: 600 } },
+                      h('input', { type: 'checkbox', 'aria-label': '整套部位-' + (o.name || o.id), checked: Boolean(all), onChange: e => setOutfitParts(o, e.target.checked) }),
+                      h('span', null, o.name || '未命名服装'),
+                    ),
+                    filled.map(([key, label]) => h('label', { key, style: { display: 'flex', alignItems: 'flex-start', gap: '8px', fontSize: '12px', padding: '2px 0 2px 22px' } },
+                      h('input', { type: 'checkbox', 'aria-label': (o.name || o.id) + '-' + label, checked: partOn(o.id, key), onChange: e => togglePart(o.id, key, e.target.checked) }),
+                      h('span', { style: { minWidth: '34px', color: '#9aa3b2' } }, label),
+                      h('span', null, valueOf(o, key).slice(0, 90)),
+                    )),
+                  )
+                }),
+              ),
+              h('div', { style: S.row },
+                h('span', { style: S.label }, '放到哪里'),
+                h('select', {
+                  'aria-label': '部位复制的目标服装',
+                  value: dest,
+                  style: Object.assign({}, S.input, { maxWidth: '220px' }),
+                  onChange: e => set({ dest: e.target.value }),
+                }, [h('option', { key: 'new', value: 'new', style: { color: 'CanvasText', backgroundColor: 'Canvas' } }, '新建一套')].concat(
+                  own.map(o => h('option', { key: o.id, value: o.id, style: { color: 'CanvasText', backgroundColor: 'Canvas' } }, '放进「' + (o.name || '未命名服装') + '」')))),
+                dest === 'new'
+                  ? h('input', { type: 'text', 'aria-label': '新服装名', placeholder: '新服装名（默认：拼搭服装）', value: cp.newName || '', style: Object.assign({}, S.input, { width: '180px' }), onChange: e => set({ newName: e.target.value }) })
+                  : h('select', { 'aria-label': '部位合并方式', value: merge, style: Object.assign({}, S.input, { maxWidth: '200px' }), onChange: e => set({ merge: e.target.value }) },
+                      h('option', { value: 'replace', style: { color: 'CanvasText', backgroundColor: 'Canvas' } }, '覆盖这些部位'),
+                      h('option', { value: 'append', style: { color: 'CanvasText', backgroundColor: 'Canvas' } }, '追加在原内容后面')),
+              ),
+              h('div', { style: S.row },
+                h('button', { style: buttonStyle, disabled: !gatheredKeys.length, onClick: copyParts },
+                  gatheredKeys.length ? '复制 ' + gatheredKeys.length + ' 个部位' + (dest === 'new' ? '为新服装' : '到这套') : '先勾选要复制的部位'),
+              ),
+            ) : null,
+            h('div', { style: { fontSize: '11px', color: '#9aa3b2', marginTop: '6px' } }, '复制后是各自独立的一份，改这边不影响原来那位；记得点「保存人物库」'),
           )
         }
         return h('div', null,

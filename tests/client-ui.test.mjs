@@ -1191,3 +1191,113 @@ test('Release updater remains visible when Git support is false and shows live T
   assert.match(rendered, /先更新 Tavern/)
   assert.equal(ui.button('检查更新').props.disabled, true)
 })
+
+test('从其他角色复制服装：可多选、同名加（复制）、新编号且不抢常穿，保存后各自独立', async () => {
+  const a = Object.assign(person('a', '甲'), { outfits: [
+    { id: 'a1', name: '常服', upper: '白衬衫', lower: '长裙', enabled: true, default: true },
+    { id: 'a2', name: '睡衣', upper: '吊带', lower: '短裤', enabled: true, default: false },
+    { id: 'a3', name: '礼服', upper: '黑色礼服', lower: '', enabled: false, default: false },
+  ] })
+  const b = Object.assign(person('b', '乙'), { outfits: [{ id: 'b1', name: '常服', upper: '卫衣', lower: '牛仔裤', enabled: true, default: true }] })
+  const ui = harness({}, [a, b])
+  await ui.ready()
+  ui.role('b')
+  ui.button('从其他角色复制服装').props.onClick(); ui.render()
+  ui.input('复制服装的来源角色').props.onChange({ target: { value: 'a' } }); ui.render()
+  assert.equal(ui.button('先勾选要复制的服装').props.disabled, true)
+  const box = name => ui.nodes(ui.input('复制服装')).find(node => node.type === 'label' && ui.text(node).startsWith(name)).children.find(child => child.type === 'input')
+  box('常服').props.onChange({ target: { checked: true } }); ui.render()
+  box('礼服').props.onChange({ target: { checked: true } }); ui.render()
+  ui.button('复制这 2 套到「乙」').props.onClick(); ui.render()
+  assert.match(ui.text(ui.render()), /有未保存修改/)
+  await ui.button('保存人物库').props.onClick(); ui.render()
+  const [savedA, savedB] = ui.state.definitions.characters
+  assert.deepEqual(savedB.outfits.map(o => o.name), ['常服', '常服（复制）', '礼服'])
+  assert.deepEqual(savedB.outfits.map(o => o.default), [true, false, false])
+  assert.equal(savedB.outfits[1].upper, '白衬衫')
+  assert.equal(savedB.outfits[2].enabled, false)
+  const ids = savedB.outfits.map(o => o.id)
+  assert.equal(new Set(ids.concat(savedA.outfits.map(o => o.id))).size, 6)
+  assert.equal(savedA.outfits.length, 3)
+  // 面板复制完自动收起
+  assert.equal(ui.nodes(ui.render()).some(node => node.props?.['aria-label'] === '复制服装'), false)
+})
+
+test('复制服装：目标角色没有服装时，第一套复制品成为常穿', async () => {
+  const a = Object.assign(person('a', '甲'), { outfits: [{ id: 'a1', name: '常服', upper: '白衬衫', enabled: true, default: true }] })
+  const ui = harness({}, [a, person('b', '乙')])
+  await ui.ready()
+  ui.role('b')
+  ui.button('从其他角色复制服装').props.onClick(); ui.render()
+  ui.input('复制服装的来源角色').props.onChange({ target: { value: 'a' } }); ui.render()
+  ui.button('全选').props.onClick(); ui.render()
+  ui.button('复制这 1 套到「乙」').props.onClick(); ui.render()
+  await ui.button('保存人物库').props.onClick(); ui.render()
+  const savedB = ui.state.definitions.characters[1]
+  assert.equal(savedB.outfits.length, 1)
+  assert.equal(savedB.outfits[0].default, true)
+  assert.notEqual(savedB.outfits[0].id, 'a1')
+})
+
+test('按部位复制：从几套里挑部位拼成新服装，同一部位按顺序用逗号拼接', async () => {
+  const a = Object.assign(person('a', '甲'), { outfits: [
+    { id: 'a1', name: '常服', upper: '白衬衫', lower: '长裙', shoes: '帆布鞋', accessory: '', enabled: true, default: true },
+    { id: 'a2', name: '冬装', upper: '大衣', lower: '毛呢裙', shoes: '短靴', accessory: '围巾', enabled: true, default: false },
+  ] })
+  const b = Object.assign(person('b', '乙'), { outfits: [{ id: 'b1', name: '常服', upper: '卫衣', lower: '牛仔裤', enabled: true, default: true }] })
+  const ui = harness({}, [a, b])
+  await ui.ready()
+  ui.role('b')
+  ui.button('从其他角色复制服装').props.onClick(); ui.render()
+  ui.input('复制服装的来源角色').props.onChange({ target: { value: 'a' } }); ui.render()
+  ui.button('按部位复制').props.onClick(); ui.render()
+  assert.equal(ui.button('先勾选要复制的部位').props.disabled, true)
+  ui.input('常服-上衣').props.onChange({ target: { checked: true } }); ui.render()
+  ui.input('冬装-上衣').props.onChange({ target: { checked: true } }); ui.render()
+  ui.input('冬装-配饰').props.onChange({ target: { checked: true } }); ui.render()
+  ui.input('新服装名').props.onChange({ target: { value: '常服' } }); ui.render()
+  ui.button('复制 2 个部位为新服装').props.onClick(); ui.render()
+  await ui.button('保存人物库').props.onClick(); ui.render()
+  const savedB = ui.state.definitions.characters[1]
+  assert.equal(savedB.outfits.length, 2)
+  const made = savedB.outfits[1]
+  assert.equal(made.name, '常服（复制）')
+  assert.equal(made.upper, '白衬衫, 大衣')
+  assert.equal(made.accessory, '围巾')
+  assert.equal(made.lower, '')
+  assert.equal(made.default, false)
+  assert.equal(ui.state.definitions.characters[0].outfits[1].upper, '大衣')
+})
+
+test('按部位复制：放进已有的一套，可覆盖或追加；整套勾选会勾上有内容的全部部位', async () => {
+  const a = Object.assign(person('a', '甲'), { outfits: [{ id: 'a1', name: '泳装', upper: '白色比基尼', lower: '比基尼下装', shoes: '凉鞋', accessory: '草帽', enabled: true, default: true }] })
+  const b = Object.assign(person('b', '乙'), { outfits: [{ id: 'b1', name: '度假', upper: '吊带', lower: '短裙', shoes: '', accessory: '墨镜', enabled: true, default: true }] })
+  const ui = harness({}, [a, b])
+  await ui.ready()
+  ui.role('b')
+  ui.button('从其他角色复制服装').props.onClick(); ui.render()
+  ui.input('复制服装的来源角色').props.onChange({ target: { value: 'a' } }); ui.render()
+  ui.button('按部位复制').props.onClick(); ui.render()
+  ui.input('整套部位-泳装').props.onChange({ target: { checked: true } }); ui.render()
+  ui.input('泳装-上衣').props.onChange({ target: { checked: false } }); ui.render()
+  ui.input('部位复制的目标服装').props.onChange({ target: { value: 'b1' } }); ui.render()
+  ui.input('部位合并方式').props.onChange({ target: { value: 'append' } }); ui.render()
+  ui.button('复制 3 个部位到这套').props.onClick(); ui.render()
+  await ui.button('保存人物库').props.onClick(); ui.render()
+  const outfit = ui.state.definitions.characters[1].outfits[0]
+  assert.equal(ui.state.definitions.characters[1].outfits.length, 1)
+  assert.equal(outfit.upper, '吊带')
+  assert.equal(outfit.lower, '短裙, 比基尼下装')
+  assert.equal(outfit.shoes, '凉鞋')
+  assert.equal(outfit.accessory, '墨镜, 草帽')
+  assert.equal(outfit.id, 'b1')
+
+  ui.button('从其他角色复制服装').props.onClick(); ui.render()
+  ui.input('复制服装的来源角色').props.onChange({ target: { value: 'a' } }); ui.render()
+  ui.button('按部位复制').props.onClick(); ui.render()
+  ui.input('泳装-配饰').props.onChange({ target: { checked: true } }); ui.render()
+  ui.input('部位复制的目标服装').props.onChange({ target: { value: 'b1' } }); ui.render()
+  ui.button('复制 1 个部位到这套').props.onClick(); ui.render()
+  await ui.button('保存人物库').props.onClick(); ui.render()
+  assert.equal(ui.state.definitions.characters[1].outfits[0].accessory, '草帽')
+})
