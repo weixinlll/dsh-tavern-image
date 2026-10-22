@@ -856,17 +856,22 @@ let openImageOverlay = null
     function openEditorFor(jobId, title, mediaContext) {
       try {
         if (!jobId || typeof openPromptEditor !== 'function') return
-        openPromptEditor({ open: true, jobId: String(jobId), prompt: '', negative: '', instruction: '', note: '正在读取提示词…', busy: '', submitted: false, uncertain: false, mediaContext: validMediaContext(mediaContext) ? mediaContext : null, channelId: '' })
+        openPromptEditor({ open: true, jobId: String(jobId), prompt: '', negative: '', artist: '', backend: '', instruction: '', note: '正在读取提示词…', busy: '', submitted: false, uncertain: false, mediaContext: validMediaContext(mediaContext) ? mediaContext : null, channelId: '' })
         jsonFetch(BASE + '/job-detail?id=' + encodeURIComponent(String(jobId)), { cache: 'no-store' })
           .then(r => {
             if (!r?.ok || !r.job) { openPromptEditor({ note: '读不到提示词：' + (r?.error || '') }); return }
-            // 显示"展开前"的原始提示词：能一眼看出调用了哪些角色 / 服装
+            // 显示"展开前"的原始提示词：能一眼看出调用了哪些角色 / 服装；
+            // 分角色的图由宿主把「场景 + 各角色块」拼好放在 promptText 里，一起显示、一起编辑。
+            const sceneText = String(r.job.rawPrompt || r.job.tag || r.job.prompt || '')
+            const blocksText = String(r.job.promptText || '')
             openPromptEditor({
-              prompt: String(r.job.rawPrompt || r.job.tag || r.job.prompt || ''),
+              prompt: blocksText || sceneText,
               negative: String(r.job.negative || ''),
-              note: '',
+              note: blocksText ? '场景与角色块一起显示；改完重画会按角色分区重新发送' : '',
               rawPrompt: String(r.job.rawPrompt || ''),
               finalPrompt: String(r.job.prompt || ''),
+              artist: String(r.job.artist || ''),
+              backend: String(r.job.backend || ''),
             })
           })
           .catch(error => openPromptEditor({ note: '读取失败：' + (error?.message ?? error) }))
@@ -1161,7 +1166,7 @@ function versionsOf(jobId) {
      * 长按 / 右键图片 → 打开编辑器：看提示词、改、让后台改、用新提示词重画。
      */
     function PromptEditor() {
-      const [view, setView] = React.useState({ open: false, jobId: '', prompt: '', negative: '', instruction: '', note: '', busy: '', loading: false })
+      const [view, setView] = React.useState({ open: false, jobId: '', prompt: '', negative: '', artist: '', backend: '', instruction: '', note: '', busy: '', loading: false })
       openPromptEditor = (next) => setView(cur => Object.assign({}, cur, next))
       useEffect(() => {
         if (!view.open || !view.mediaContext) return undefined
@@ -1182,12 +1187,17 @@ function versionsOf(jobId) {
       async function improve() {
         openPromptEditor({ busy: 'improve', note: '后台正在改…' })
         try {
+          // 整段（场景 + 角色块）交给后台：那边按结构改写，场景和每个角色的 Tag 都能动
           const r = await jsonFetch(BASE + '/improve-prompt', {
             method: 'POST', headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ jobId: view.jobId, prompt: view.prompt, instruction: view.instruction }),
           })
           if (!r?.ok || !r.prompt) { say('没改成：' + (r?.error || '模型没返回')); return }
-          openPromptEditor({ prompt: r.prompt, note: '已按你的要求改写，可以直接重画', busy: '' })
+          openPromptEditor({
+            prompt: String(r.prompt),
+            note: r.repaired ? '改好了；模型没保住角色块结构，已用原来的角色块补回' : '已按你的要求改写（角色块也一起改了），可以直接重画',
+            busy: '',
+          })
         } catch (error) {
           say('失败：' + (error?.message ?? error))
         } finally {
@@ -1264,7 +1274,15 @@ function versionsOf(jobId) {
           React.createElement('button', { type: 'button', onClick: close, style: { padding: '5px 14px', fontSize: '13px', borderRadius: '8px', border: '1px solid rgba(160,180,210,.5)', background: 'transparent', color: '#dbe3ee', cursor: 'pointer' } }, '关闭'),
         ),
         React.createElement('img', { src: BASE + '/jobs?id=' + encodeURIComponent(view.jobId) + '&image=1', style: { display: 'block', maxWidth: '260px', borderRadius: '10px', margin: '0 auto 16px', background: '#1a1d24' } }),
-        React.createElement('div', { style: { fontSize: '12px', color: '#9aa3b2', marginBottom: '6px' } }, '正向提示词（可直接改，然后重画）'),
+        view.backend === 'novelai' && String(view.artist || '').trim() ? React.createElement(React.Fragment, null,
+          React.createElement('div', { style: { fontSize: '12px', color: '#9aa3b2', marginBottom: '6px' } }, '画风 / 基础串（只读，重画时自动带上）'),
+          React.createElement('textarea', {
+            value: view.artist,
+            readOnly: true,
+            style: Object.assign({}, area, { minHeight: '52px', opacity: 0.75 }),
+          })
+        ) : null,
+        React.createElement('div', { style: { fontSize: '12px', color: '#9aa3b2', marginBottom: '6px' } }, '正向提示词（场景 + 角色块，可直接改，然后重画）'),
         React.createElement('textarea', {
           value: view.prompt,
           style: area,
@@ -2721,20 +2739,10 @@ function versionsOf(jobId) {
           label(caption), h('input', { 'aria-label': caption, type, value: String((localFields.options || {})[key] ?? ''), placeholder: placeholder || '', style: full(), onChange: e => updateOption(key, type === 'number' ? Number(e.target.value) : e.target.value) }))
         // NovelAI 常用模型 / 采样器 / 噪点表（下拉候选；不在表里的旧值会作为「当前值」保留）
         const NAI_MODEL_OPTIONS = [
+          ['nai-diffusion-5-full', 'V5 Full'],
+          ['nai-diffusion-5-curated', 'V5 Curated'],
           ['nai-diffusion-4-5-full', 'V4.5 Full（默认）'],
           ['nai-diffusion-4-5-curated', 'V4.5 Curated'],
-          ['nai-diffusion-4-5-full-inpainting', 'V4.5 Full · 重绘'],
-          ['nai-diffusion-4-5-curated-inpainting', 'V4.5 Curated · 重绘'],
-          ['nai-diffusion-4-full', 'V4 Full'],
-          ['nai-diffusion-4-curated-preview', 'V4 Curated'],
-          ['nai-diffusion-4-full-inpainting', 'V4 Full · 重绘'],
-          ['nai-diffusion-4-curated-inpainting', 'V4 Curated · 重绘'],
-          ['nai-diffusion-3-full', 'V3 Full'],
-          ['nai-diffusion-3-curated', 'V3 Curated'],
-          ['nai-diffusion-3', 'V3 Anime'],
-          ['nai-diffusion-3-inpainting', 'V3 · 重绘'],
-          ['nai-diffusion-furry-3', 'V3 Furry'],
-          ['nai-diffusion-furry-3-inpainting', 'V3 Furry · 重绘'],
         ]
         const NAI_SAMPLER_OPTIONS = [
           ['k_euler_ancestral', 'Euler Ancestral（常用）'],
@@ -5480,6 +5488,15 @@ function versionsOf(jobId) {
             h('select', { value: config.promptMode || 'auto', style: S.input, onChange: e => save({ promptMode: e.target.value }) },
               h('option', { value: 'auto', style: optStyle }, '自动'), h('option', { value: 'tags', style: optStyle }, '标签'), h('option', { value: 'natural', style: optStyle }, '自然语言'), h('option', { value: 'mixed', style: optStyle }, '混合')),
             h('span', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-tertiary)' } }, '当前：' + (config.promptEffectiveFormat || 'mixed')),
+          ),
+          h('div', { style: S.row },
+            h('label', { style: S.label }, '权重写法'),
+            h('select', { value: config.weightMode || 'auto', style: S.input, onChange: e => save({ weightMode: e.target.value }) },
+              h('option', { value: 'auto', style: optStyle }, '自动（NovelAI 原样，其它转换）'),
+              h('option', { value: 'keep', style: optStyle }, '原样发送'),
+              h('option', { value: 'convert', style: optStyle }, '转换成 SD 权重（仅非 NovelAI）'),
+              h('option', { value: 'strip', style: optStyle }, '去掉权重')),
+            h('span', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-tertiary)' } }, 'NovelAI 渠道建议自动或原样，避免多 Tag 权重组被改写'),
           ),
           h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' } }, library.map(profile => h('button', { key: profile.id, style: Object.assign({}, buttonStyle, { borderColor: activeId === profile.id ? 'var(--dsw-alias-brand-primary)' : undefined }), onClick: () => save({ activePromptPreset: profile.id }) }, (activeId === profile.id ? '● ' : '○ ') + profile.name))),
           h('div', { style: Object.assign({}, S.row, { marginTop: '7px' }) }, h('button', { style: buttonStyle, disabled: draft.length >= 60, onClick: addBlank }, '新建空白预设'), h('button', { style: buttonStyle, onClick: () => save({ activePromptPreset: '' }) }, '不使用预设')),

@@ -331,10 +331,11 @@
         </div>
       </div>
       <div class="setting">
-        <div class="label"><div class="name">NovelAI 的加粗写法</div><div class="why">插件写的是 NovelAI 语法（<code>{{{词}}}</code>、<code>0.9::词::</code>），本地模型不认。转一下效果更接近原意</div></div>
+        <div class="label"><div class="name">NovelAI 的加粗写法</div><div class="why">默认按渠道自动：NovelAI 原样发送，其它渠道转成本地写法</div></div>
         <div class="control" style="max-width:280px">
           <select id="cfgWeightMode">
-            <option value="convert">自动转成本地能懂的写法</option>
+            <option value="auto">自动（按渠道）</option>
+            <option value="convert">转成本地能懂的写法（仅非 NovelAI）</option>
             <option value="strip">只去掉符号，保留词</option>
             <option value="keep">原样发送（NovelAI 渠道用这个）</option>
           </select>
@@ -700,7 +701,7 @@ function renderSettings() {
   $('#autoGen').checked = state.config.autoImageGen === true
   $('#genCount').value = state.config.imageGenCount || 2
   $('#cfgArtistPosition').value = state.config.artistPosition || 'prefix'
-  $('#cfgWeightMode').value = state.config.weightMode || 'convert'
+  $('#cfgWeightMode').value = state.config.weightMode || 'auto'
   $('#cfgNegativeMode').value = state.config.negativeMode || 'plugin'
   $('#cfgInjectWeight').value = state.config.injectWeight ?? 1.1
   $('#cfgOverrideSteps').checked = Boolean(state.config.overrideSteps)

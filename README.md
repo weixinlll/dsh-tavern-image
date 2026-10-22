@@ -309,6 +309,31 @@ if ($LASTEXITCODE -ne 0) { throw 'DSH 官方 CLI 未能登记新包；保留备�
 
 导出会先尝试复制 JSON；剪贴板不可用时改为下载文件，并保留可手动复制的文本。
 
+### 分角色提示词（NovelAI）
+
+NovelAI 官方格式渠道支持把每个角色写成独立的 char caption，而不是全部塞进一条 base 提示词。这套格式由**世界书**提供：种子世界书里有一条「11 分角色提示词（NovelAI）」，只对 NovelAI 渠道生效，其它渠道和对话格式（`chat/completions` 中转）不会看到它。插件不会自动改你的世界书；已经初始化过世界书的老用户不会随升级拿到新条目，需要手动加一条（内容见仓库里的 `世界书-通用生图规则.txt`，或直接导入整份种子规则）。
+
+在 `<prompts>` 里的结构是：
+
+```xml
+<prompts>
+<scene_composition>1girl, solo, indoors, upper body, from front</scene_composition>
+<character_1>
+<prompt>lin lan, black hair, white shirt, opening door, looking back</prompt>
+<centers>C3</centers>
+<uc>background characters</uc>
+</character_1>
+</prompts>
+```
+
+- `<scene_composition>` 只放场景、背景、光影、构图和人数 Tag；角色一律进各自的 `<character_N>`（N 从 1 连续编号，最多 8 个）
+- 每个角色的 `<prompt>` 写这个人的外貌、服装、姿势、动作、表情和互动；人物库里的角色可以用人物宏（`${"name":"…"}$`），插件会按宏补全外貌与服装，库外角色直接白描
+- `<centers>` 可选，用 5×5 网格：列 `A`–`E`（左→右）、行 `1`–`5`（上→下），`C3` 表示正中，映射到归一化坐标 0.1–0.9。**只要有一个角色没写坐标就整张不用坐标**（避免没坐标的角色被甩到角落），改用 NAI 自动布局
+- `<uc>` 是这个角色单独的负面词，写进 `v4_negative_prompt`，不影响其他角色
+- 标签要成对闭合；Tag 内不要出现 `<` `>`，否则会截断结构
+- 长按图片打开的提示词编辑器会把场景和角色块一起显示，改完重画仍按角色分区发送；「重画」和「单图重绘」都会沿用原图的角色块
+- 没有 `<character_N>` 时仍按原来的一条提示词处理；其它渠道（ComfyUI、OpenAI、Gemini、SD WebUI、Qwen）即使收到结构，也会把场景与角色用逗号合并回一条提示词
+
 默认配图规则用于首次初始化，已保存的个人规则不会随插件升级重置。导入的其他引擎宏和包装语法会做清理；只导入适合绘图规划的内容更容易检查结果。
 
 需要减少图片体积时，可以开启 **PNG 转 JPEG**，质量可设为 50–100。透明区域会按所选背景色铺底。已经是 JPEG 或其他格式的图片不会重复转换；转换失败或超过限制时保留原图并给出说明。默认保持原始格式。

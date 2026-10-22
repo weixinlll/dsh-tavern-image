@@ -200,3 +200,53 @@
 - 正在变化的瞬间，按变化**之后**更接近的那个形态选，并在主干句里写清楚正在发生的变化。
 - 服装照常写在同一个宏里：`${"name":"A Mei fox form", "outfit":"外出便装", ...}$`，形态变了衣服不变。
 - 不要只写不带形态的短名字（如 `A Mei`）。
+
+---
+
+## 11 分角色提示词（NovelAI）
+
+# 分角色提示词（NovelAI）
+当前渠道是 NovelAI，支持每个角色单独一段提示词（char captions）。本渠道下**覆盖第 02、03 条的主干句写法和固定输出协议里的 `<prompts>完整画面提示词</prompts>`**：`<image>`、`<regex>`、`<title_styled>`、`<size>` 照旧，`<prompts>` 里面改成下面的结构。
+
+<prompts>
+<scene_composition>1girl, 1boy, indoors, café, warm light, upper body, from front</scene_composition>
+<character_1>
+<prompt>${"name":"xiao yu","angle":"from front","upperBody":"sfw","lowerBody":"sfw"}$, 当前动作, 当前表情</prompt>
+<centers>C3</centers>
+<uc>background characters, fused bodies</uc>
+</character_1>
+<character_2>
+<prompt>${"name":"alan","angle":"from front","upperBody":"sfw","lowerBody":"sfw"}$, 当前动作, 当前表情</prompt>
+<centers>D4</centers>
+<uc>background characters, fused bodies</uc>
+</character_2>
+</prompts>
+
+## 场景（scene_composition）
+只写：场景类型（sfw / nsfw）、背景地点与环境细节、时间天气、光源与光影方向、构图（景别 / 视角 / 焦点 / 景深）、人数与性别 Tag（`1girl` / `1boy` / `2girls` / `solo` / `no humans`）。
+**不写任何人物的外貌、服装、动作、表情** —— 那些属于各自的角色块。
+
+## 角色块（character_N）
+- 画面里每个清晰入镜的人写一个 `<character_N>`，`N` 从 1 连续，按“主角 → 配角”排序；一个角色只占一个块，严禁把两个人合并进同一个块。
+- `<prompt>` 里写这个角色自己的全部可见信息：人物宏、服装宏或 `"outfit"` 字段、当前动作、当前表情、与别人的互动。
+  - 库中角色必须调用人物宏：`${"name":"英文名","angle":"from front","upperBody":"sfw","lowerBody":"sfw"}$`；库外角色直接英文白描。
+  - 服装照第 04 条：能对上服装库就写服装宏 `${"name":"服装名","upperBody":"visible","lowerBody":"visible"}$`，否则在人物宏里写 `"outfit":"英文描述"`。
+  - 每个角色块控制在 15~20 个 Tag（最多 20），所有角色块合计占全图 50~70%；不足时补背景细节、光影、微表情、生理反应、特效。
+- 多人互动必须写清发起方 / 承受方：发起方 `source#动作`，承受方 `target#动作`，互相动作用 `mutual#动作`（例如 `source#kissing` / `target#kissing`），避免动作画到错的人身上。
+
+## 坐标（centers）
+把画面分成 5×5 网格：列 `A`–`E` 左→右，行 `1`–`5` 上→下，`C3` 是正中。
+- 每个角色最多一个坐标；角色位置可以重叠（拥抱、亲吻时）。
+- 要么每个角色都写，要么都不写：只要有一个角色没写，插件整张不用坐标，交给 NovelAI 自动排布。
+- 构图没把握就省略，不要瞎写。
+
+## 角色负面（uc）
+`<uc>` 只作用于这个角色，不会压掉别人：
+- 每个角色都建议带 `background characters`；画面里有两个及以上角色时再加 `fused bodies`。
+- 按构图排除看不见的东西：只有下半身 → 排除上半身 Tag；背影 → 排除眼睛、表情；蒙眼 → 排除 `eye color`。
+- 按这一格的动作/表情互相排除：A 微笑、B 哭泣 → A 的 `<uc>` 写 `crying`。
+
+## 其他
+- 纯场景、没有人物的图只写 `<scene_composition>`，不要硬加角色块。
+- 所有标签必须成对闭合；Tag 里不要出现 `<` 或 `>`。
+- 本规则只用于 NovelAI 渠道；其它渠道仍按第 02、03 条写一条 prompts。
